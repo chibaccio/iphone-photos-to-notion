@@ -2,7 +2,7 @@
  * iPhone写真自動連携 Webhook
  * 
  * 役割:
- * iPhoneショートカットからPOSTされた昨日の写真データ（Base64）を受信し、
+ * iPhoneショートカットからPOSTされた写真データ（Base64）を受信し、
  * Notion File Upload API を使用してアップロードの上、
  * 対象日の日記ページの本文末尾へ画像ブロックとして追加します。
  * （※プロパティ「本日の一枚」には触れず、本文内へ追加します）
@@ -12,6 +12,7 @@ const CONFIG = {
   DEFAULT_DATABASE_ID: '7f0bc47e982b49a3a2edebeede8cfc4e',
   DEFAULT_DATE_PROP: 'Date',
   NOTION_VERSION: '2026-03-11',
+  TIMEZONE: 'Asia/Tokyo',
   MAX_IMAGES: 15
 };
 
@@ -26,6 +27,15 @@ function getDatabaseId() {
 
 function getDatePropName() {
   return PropertiesService.getScriptProperties().getProperty('NOTION_DATE_PROP') || CONFIG.DEFAULT_DATE_PROP;
+}
+
+/**
+ * 昨日の日付文字列（YYYY-MM-DD）を取得
+ */
+function getYesterdayDateString() {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  return Utilities.formatDate(yesterday, CONFIG.TIMEZONE, 'yyyy-MM-dd');
 }
 
 /**
@@ -46,12 +56,19 @@ function doPost(e) {
       return makeJsonResponse({ status: 'forbidden', message: 'Invalid or missing API key' }, 403);
     }
 
-    // 2. パラメータ確認
-    const targetDate = payload.date; // 'YYYY-MM-DD'
-    const images = payload.images || [];
+    // 2. 日付の取得（指定がなければ自動で「昨日」を採用）
+    const targetDate = payload.date || getYesterdayDateString();
 
-    if (!targetDate) {
-      return makeJsonResponse({ status: 'error', message: 'Target date is missing' }, 400);
+    // 3. 画像データの正規化（単一送信と一括送信の両方に対応）
+    let images = [];
+    if (payload.images && Array.isArray(payload.images)) {
+      images = payload.images;
+    } else if (payload.image || payload.base64) {
+      images = [{
+        filename: payload.filename || 'photo.jpg',
+        base64: payload.image || payload.base64,
+        mimeType: payload.mimeType || 'image/jpeg'
+      }];
     }
 
     if (images.length === 0) {
@@ -62,7 +79,7 @@ function doPost(e) {
       return makeJsonResponse({ status: 'error', message: `Too many images. Max allowed is ${CONFIG.MAX_IMAGES}` }, 400);
     }
 
-    // 3. Notionの日記ページIDを検索（Dateプロパティで特定）
+    // 4. Notionの日記ページIDを検索（Dateプロパティで特定）
     const pageId = findDiaryPageForPhotos(targetDate);
     if (!pageId) {
       console.warn(`対象日 (${targetDate}) の日記ページがNotionに見つかりませんでした。`);
@@ -72,16 +89,21 @@ function doPost(e) {
       }, 404);
     }
 
-    // 4. 画像を1枚ずつNotionへアップロードし、ページ本文末尾へ追加
+    // 5. 画像を1枚ずつNotionへアップロードし、ページ本文末尾へ追加
     let successCount = 0;
     const errors = [];
 
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
       try {
-        const decodedBytes = Utilities.base64Decode(img.base64);
-        const fileName = img.filename || `photo_${i + 1}.jpg`;
-        const mimeType = img.mimeType || 'image/jpeg';
+        const rawBase64 = img.base64 || img.image;
+        if (!rawBase64) {
+          throw new Error('Base64 data is empty');
+        }
+        const decodedBytes = Utilities.base64Decode(rawBase64);
+        let fileName = img.filename || `photo_${i + 1}.jpg`;
+        if (!fileName.includes('.')) fileName += '.jpg';
+        const mimeType = img.mimeType || (fileName.endsWith('.png') ? 'image/png' : 'image/jpeg');
         const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
 
         // Notion File Upload API
