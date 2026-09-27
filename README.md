@@ -5,8 +5,8 @@ iPhoneで撮影した前日の写真を、iOSショートカット経由で受�
 ## 本番デプロイ情報
 - **GASプロジェクト**: [iphone-photos-to-notion (GASエディタ)](https://script.google.com/d/1AGdr8-5P0D-8LCluq5s81_16aQJwhcNCh5hE8Gcdnhf8YTOJ7D_hW4dt/edit?usp=drivesdk)
 - **スクリプトID**: `1AGdr8-5P0D-8LCluq5s81_16aQJwhcNCh5hE8Gcdnhf8YTOJ7D_hW4dt`
-- **デプロイID**: `AKfycbyy1fCv90lGGOAJpQKEAI6ufMPfv3AGxt4nTOu9lbOmbiawy31GU_ISw-x8cUSw2BsF`
-- **WebアプリURL**: `https://script.google.com/macros/s/AKfycbyy1fCv90lGGOAJpQKEAI6ufMPfv3AGxt4nTOu9lbOmbiawy31GU_ISw-x8cUSw2BsF/exec`
+- **デプロイID**: `AKfycbzoCgj_G92jcPxqIBGBHV2l-z3v4a9vU3-fcrw2_mTHKMp9aaS8PvgeDf1PU9yEm9CL`
+- **WebアプリURL**: `https://script.google.com/macros/s/AKfycbzoCgj_G92jcPxqIBGBHV2l-z3v4a9vU3-fcrw2_mTHKMp9aaS8PvgeDf1PU9yEm9CL/exec`
 
 ## 特徴
 - **GoogleフォトAPIの制限を回避**: iPhoneの標準ショートカットで「昨日の写真」を抽出し直接GASへPOST送信。
@@ -24,7 +24,7 @@ iPhoneで撮影した前日の写真を、iOSショートカット経由で受�
 | `NOTION_DATE_PROP` | 任意 | 日付プロパティ名（未設定時は `Date`） | `Date` |
 
 ## iPhoneショートカット設定
-- POST送信先URL: `https://script.google.com/macros/s/AKfycbyy1fCv90lGGOAJpQKEAI6ufMPfv3AGxt4nTOu9lbOmbiawy31GU_ISw-x8cUSw2BsF/exec`
+- POST送信先URL: `https://script.google.com/macros/s/AKfycbzoCgj_G92jcPxqIBGBHV2l-z3v4a9vU3-fcrw2_mTHKMp9aaS8PvgeDf1PU9yEm9CL/exec`
 - 送信JSON形式:
   ```json
   {
