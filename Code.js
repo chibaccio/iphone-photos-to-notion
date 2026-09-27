@@ -10,6 +10,7 @@
 
 const CONFIG = {
   DEFAULT_DATABASE_ID: '7f0bc47e982b49a3a2edebeede8cfc4e',
+  DEFAULT_DATA_SOURCE_ID: 'c01029af-7268-4e1b-9ae8-c36317e02b6b',
   DEFAULT_DATE_PROP: 'Date',
   NOTION_VERSION: '2026-03-11',
   TIMEZONE: 'Asia/Tokyo',
@@ -135,29 +136,47 @@ function doPost(e) {
 }
 
 /**
- * 対象日付の日記ページを特定
+ * 対象日付の日記ページを特定（Notion 2026年仕様 data_sources と旧 databases の両方に対応）
  */
 function findDiaryPageForPhotos(dateStr) {
   const token = getNotionToken();
-  const databaseId = getDatabaseId();
   const dateProp = getDatePropName();
-  const url = `https://api.notion.com/v1/databases/${databaseId}/query`;
+  const dbId = getDatabaseId().replace(/-/g, '');
+  
+  const payload = {
+    filter: {
+      property: dateProp,
+      date: { equals: dateStr }
+    }
+  };
 
-  const response = UrlFetchApp.fetch(url, {
+  // 1. data_sources/{id}/query 形式（Notion 2026-03-11 / 2025-09-03仕様）
+  const dsUrl = `https://api.notion.com/v1/data_sources/${CONFIG.DEFAULT_DATA_SOURCE_ID}/query`;
+  let response = UrlFetchApp.fetch(dsUrl, {
     method: 'post',
     headers: {
       'Authorization': 'Bearer ' + token,
-      'Notion-Version': CONFIG.NOTION_VERSION,
+      'Notion-Version': '2026-03-11',
       'Content-Type': 'application/json'
     },
-    payload: JSON.stringify({
-      filter: {
-        property: dateProp,
-        date: { equals: dateStr }
-      }
-    }),
+    payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
+
+  // 2. もし失敗した場合は databases/{id}/query（2022-06-28仕様）でフォールバック試行
+  if (response.getResponseCode() !== 200) {
+    const legacyUrl = `https://api.notion.com/v1/databases/${dbId}/query`;
+    response = UrlFetchApp.fetch(legacyUrl, {
+      method: 'post',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+  }
 
   if (response.getResponseCode() !== 200) {
     throw new Error(`Notion DBクエリ失敗 (${response.getResponseCode()}): ${response.getContentText()}`);
