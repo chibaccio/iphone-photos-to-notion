@@ -4,7 +4,7 @@
  * 役割:
  * iPhoneショートカットからPOSTされた写真データ（Base64）を受信し、
  * Notion File Upload API を使用してアップロードの上、
- * 対象日の日記ページの本文末尾へ画像ブロックとして追加します。
+ * 対象日の日記ページのトグル「Review the same days」の直下へ画像ブロックとして追加します。
  * （※プロパティ「本日の一枚」には触れず、本文内へ追加します）
  */
 
@@ -90,7 +90,15 @@ function doPost(e) {
       }, 404);
     }
 
-    // 5. 画像を1枚ずつNotionへアップロードし、ページ本文末尾へ追加
+    // 5. 挿入基準位置（「Review the same days」ブロック）を検索
+    let currentAfterBlockId = findTargetInsertBlockId(pageId);
+    if (currentAfterBlockId) {
+      console.log(`挿入先アンカーブロックを検出: ${currentAfterBlockId}`);
+    } else {
+      console.log('「Review the same days」ブロックが見つからないため、ページ末尾に追加します。');
+    }
+
+    // 6. 画像を1枚ずつNotionへアップロードし、対象位置へ順番に追加
     let successCount = 0;
     const errors = [];
 
@@ -110,8 +118,12 @@ function doPost(e) {
         // Notion File Upload API
         const fileUploadId = uploadImageBlobToNotion(blob);
 
-        // 日記ページの本文末尾に画像ブロックを追加
-        appendPhotoBlockToPage(pageId, fileUploadId);
+        // 日記ページの指定位置（Review the same days 直下）に画像ブロックを追加
+        const newBlockId = appendPhotoBlockToPage(pageId, fileUploadId, currentAfterBlockId);
+        if (newBlockId) {
+          // 次の画像は、今追加した画像の直後に配置することで送信順を維持
+          currentAfterBlockId = newBlockId;
+        }
 
         successCount++;
         Utilities.sleep(300); // Notion API レートリミット保護
@@ -126,6 +138,7 @@ function doPost(e) {
       targetDate: targetDate,
       totalReceived: images.length,
       uploaded: successCount,
+      insertedBelow: currentAfterBlockId ? 'Review the same days' : 'page_end',
       errors: errors
     });
 
@@ -190,6 +203,67 @@ function findDiaryPageForPhotos(dateStr) {
 }
 
 /**
+ * ページ内の「Review the same days」ブロックを特定し、挿入基準位置のブロックIDを返す
+ * 直後にすでに連続する画像ブロックが存在する場合は、その画像グループの末尾IDを返します。
+ */
+function findTargetInsertBlockId(pageId) {
+  try {
+    const token = getNotionToken();
+    const cleanId = pageId.replace(/-/g, '');
+    const url = `https://api.notion.com/v1/blocks/${cleanId}/children?page_size=100`;
+
+    const res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Notion-Version': CONFIG.NOTION_VERSION
+      },
+      muteHttpExceptions: true
+    });
+
+    if (res.getResponseCode() !== 200) {
+      console.warn(`ブロック一覧取得失敗 (${res.getResponseCode()}): ${res.getContentText()}`);
+      return null;
+    }
+
+    const data = JSON.parse(res.getContentText());
+    if (!data.results || data.results.length === 0) return null;
+
+    let targetIdx = -1;
+    for (let i = 0; i < data.results.length; i++) {
+      const block = data.results[i];
+      const type = block.type;
+      const blockContent = block[type];
+      if (blockContent && blockContent.rich_text && Array.isArray(blockContent.rich_text)) {
+        const text = blockContent.rich_text.map(t => t.plain_text || '').join('');
+        if (text.includes('Review the same days')) {
+          targetIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (targetIdx === -1) return null;
+
+    // 「Review the same days」の直後にすでに連続して画像ブロックが存在する場合、
+    // その最後の画像ブロックの後ろに挿入して写真グループの末尾に追加する
+    let lastBlockId = data.results[targetIdx].id;
+    for (let j = targetIdx + 1; j < data.results.length; j++) {
+      if (data.results[j].type === 'image') {
+        lastBlockId = data.results[j].id;
+      } else {
+        break;
+      }
+    }
+
+    return lastBlockId;
+  } catch (e) {
+    console.warn(`挿入位置ブロック検索中にエラー: ${e.message}`);
+    return null;
+  }
+}
+
+/**
  * Notion File Upload API (Direct Upload)
  */
 function uploadImageBlobToNotion(blob) {
@@ -240,9 +314,13 @@ function uploadImageBlobToNotion(blob) {
 }
 
 /**
- * 日記ページの本文末尾に画像ブロックを追加
+ * 日記ページに画像ブロックを追加
+ * @param {string} pageId - 日記ページID
+ * @param {string} fileUploadId - Notion File Upload ID
+ * @param {string|null} afterBlockId - 挿入位置となる直前ブロックのID（nullの場合は末尾）
+ * @returns {string|null} 新規作成された画像ブロックのID
  */
-function appendPhotoBlockToPage(pageId, fileUploadId) {
+function appendPhotoBlockToPage(pageId, fileUploadId, afterBlockId) {
   const token = getNotionToken();
   const cleanId = pageId.replace(/-/g, '');
   const url = `https://api.notion.com/v1/blocks/${cleanId}/children`;
@@ -262,6 +340,16 @@ function appendPhotoBlockToPage(pageId, fileUploadId) {
     ]
   };
 
+  // 指定ブロックの後ろに挿入（Notion 2026-03-11 position オブジェクト仕様）
+  if (afterBlockId) {
+    payload.position = {
+      type: 'after_block',
+      after_block: {
+        id: afterBlockId
+      }
+    };
+  }
+
   const res = UrlFetchApp.fetch(url, {
     method: 'patch',
     headers: {
@@ -276,6 +364,12 @@ function appendPhotoBlockToPage(pageId, fileUploadId) {
   if (res.getResponseCode() !== 200) {
     throw new Error(`Notion画像ブロック追加失敗 (${res.getResponseCode()}): ${res.getContentText()}`);
   }
+
+  const data = JSON.parse(res.getContentText());
+  if (data.results && data.results.length > 0) {
+    return data.results[0].id;
+  }
+  return null;
 }
 
 /**
